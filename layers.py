@@ -70,7 +70,7 @@ class MultiHeadedAttention(torch.nn.Module):
     Creates a multi-headed attention module from "Attention is all you need".
     """
 
-    def __init__(self, d_model: int, d_k: int, d_v: int, h: int = 1, scale: float | None = None, device=torch.device("cpu")):
+    def __init__(self, d_model: int, d_k: int, d_v: int, h: int = 1, scale: float | None = None):
         """Initializes the multi-headed attention module, build according to "Attention is all you need"
 
         Args:
@@ -79,25 +79,25 @@ class MultiHeadedAttention(torch.nn.Module):
             d_v (int): dimension of values
             h (int, optional): number of heads. Defaults to 1.
             scale (float | None, optional): scale to use instead of default. Defaults to None.
-            device (_type_, optional): device to use for computation. Defaults to torch.device("cpu").
         """
         super(MultiHeadedAttention, self).__init__()
-        self.device = device
         self.scale = scale
         self.h = h
         self.d_model = d_model
         self.d_k = d_k
         self.d_v = d_v
+
         self.query_linear = torch.nn.ModuleList([torch.nn.Linear(
-            d_model, d_k, bias=False, device=self.device) for _ in range(h)])
+            d_model, d_k, bias=False) for _ in range(h)])
         self.key_linear = torch.nn.ModuleList([torch.nn.Linear(
-            d_model, d_k, bias=False, device=self.device) for _ in range(h)])
+            d_model, d_k, bias=False) for _ in range(h)])
         self.value_linear = torch.nn.ModuleList([torch.nn.Linear(
-            d_model, d_v, bias=False, device=self.device) for _ in range(h)])
+            d_model, d_v, bias=False) for _ in range(h)])
+
         self.attention_layers = torch.nn.ModuleList([
             ScaledDotProductAttention(scale) for _ in range(h)])
-        self.output_linear = torch.nn.Linear(
-            h*d_v, d_model, bias=False, device=self.device)
+
+        self.output_linear = torch.nn.Linear(h*d_v, d_model, bias=False)
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, mask: torch.Tensor | None = None):
         """Forward step for MultiHeadedAttention from "Attention is all you need". Implementation
@@ -134,7 +134,7 @@ class MultiHeadedAttention(torch.nn.Module):
 
 
 class TransformerDecoderModule(torch.nn.Module):
-    def __init__(self, d_model: int, d_k: int, d_v: int, d_ff: int, h: int = 1, scale: float | None = None, dropout_p: float = 0.0, activation=torch.relu, device=torch.device("cpu")):
+    def __init__(self, d_model: int, d_k: int, d_v: int, d_ff: int, h: int = 1, scale: float | None = None, dropout_p: float = 0.0, activation=torch.relu):
         """Initializes the transformer decoder module, build according to "Attention is all you need".
         The transformer decoder architecture stacks multiple of these decoder modules.
 
@@ -147,10 +147,8 @@ class TransformerDecoderModule(torch.nn.Module):
             scale (float | None, optional): scale to use instead of default. Defaults to None.
             dropout_p (float, optional): probability for dropout in sublayers. Defaults to 0.0.
             activation ((input: torch.Tensor) -> torch.Tensor, optional): activation function for feedforward sublayer. Defaults to torch.relu.
-            device (_type_, optional): device to use for computation. Defaults to torch.device("cpu").
         """
         super(TransformerDecoderModule, self).__init__()
-        self.device = device
         self.scale = scale
         self.h = h
         self.d_model = d_model
@@ -160,7 +158,7 @@ class TransformerDecoderModule(torch.nn.Module):
         self.dropout_p = dropout_p
 
         self.multi_headed_attention = MultiHeadedAttention(
-            d_model, d_k, d_v, h, scale, device)
+            d_model, d_k, d_v, h, scale)
 
         self.feed_forward_0 = torch.nn.Linear(d_model, d_ff)
         self.feed_forward_1 = torch.nn.Linear(d_ff, d_model)
@@ -172,6 +170,16 @@ class TransformerDecoderModule(torch.nn.Module):
         self.dropout_1 = torch.nn.Dropout(dropout_p)
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor):
+        """Forward step for single decoder module from transformer decoder architecture in "Attention is all you need".
+        We do not include the encoder-decoder multi-headed attention module, similar to decoder models for LLMs.
+
+        Args:
+            x (torch.Tensor): input tensor (autoregressive)
+            mask (torch.Tensor): mask tensor for autoregressive behaviour.
+
+        Returns:
+            torch.Tensor: output of forward step
+        """
         # MultiHeadedAttention (masked) - Sublayer 0
         attention = self.multi_headed_attention(x, x, x, mask)
         attention_dropout = self.dropout_0(attention)
@@ -190,3 +198,45 @@ class TransformerDecoderModule(torch.nn.Module):
         layer_norm_1 = self.layer_norm_1(residual_1)
 
         return layer_norm_1
+
+
+class TransformerDecoder(torch.nn.Module):
+    def __init__(self, n: int, d_model: int, d_k: int, d_v: int, d_ff: int, h: int = 1, scale: float | None = None, dropout_p: float = 0.0, activation=torch.relu):
+        """Initializes the transformer decoder, build according to "Attention is all you need".
+
+        Args:
+            d_model (int): dimension of model
+            d_k (int): dimension of queries and keys
+            d_v (int): dimension of values
+            d_ff (int): intermediate dimension of feedforward sublayer
+            h (int, optional): number of heads. Defaults to 1.
+            scale (float | None, optional): scale to use instead of default. Defaults to None.
+            dropout_p (float, optional): probability for dropout in sublayers. Defaults to 0.0.
+            activation ((input: torch.Tensor) -> torch.Tensor, optional): activation function for feedforward sublayer. Defaults to torch.relu.
+        """
+        super(TransformerDecoder, self).__init__()
+        self.scale = scale
+        self.n = n
+        self.h = h
+        self.d_model = d_model
+        self.d_k = d_k
+        self.d_v = d_v
+        self.activation = activation
+        self.dropout_p = dropout_p
+
+        self.decoder_modules = torch.nn.ModuleList([TransformerDecoderModule(
+            d_model, d_k, d_v, d_ff, h, scale, dropout_p, activation) for _ in range(n)])
+
+    def forward(self, x: torch.Tensor):
+        """Forward step for full decoder from "Attention is all you need" with "n" single decoder modules
+        fed into another (without the encoder-decoder multi-headed attention module).
+
+        Args:
+            x (torch.Tensor): input tensor
+
+        Returns:
+            torch.Tensor: output of forward step
+        """
+        for i in range(self.n):
+            x = self.decoder_modules[i](x)
+        return x
