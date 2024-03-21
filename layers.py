@@ -1,5 +1,6 @@
 import torch
 import math
+import numpy as np
 
 
 class ScaledDotProductAttention(torch.nn.Module):
@@ -27,11 +28,11 @@ class ScaledDotProductAttention(torch.nn.Module):
 
         Raises:
             RuntimeError: if query and key shapes are not identical.
-            RuntimeError: if sequence dimension differs across queries, keys, and values. 
+            RuntimeError: if sequence dimension differs across queries, keys, and values.
             RuntimeError: if mask does not have shape of [sequence length]
 
         Returns:
-            torch.Tensor: 
+            torch.Tensor:
         """
         # Check dimensions
         if (q.shape != k.shape):
@@ -44,7 +45,7 @@ class ScaledDotProductAttention(torch.nn.Module):
                 "Query, Key, Value, and mask shapes should have the same sequence dimension.")
 
         # Dot-product (similarity measure, q_dim = [bs, seq, q_k], k_dim = [bs, seq, q_k], out = [bs, seq, seq])
-        matmul_0 = torch.matmul(q, k.transpose(-2, -1))
+        matmul_0 = torch.matmul(q, k.mT)
 
         # Scaling
         scale = 1.0 / math.sqrt(q.shape[-1]
@@ -60,7 +61,7 @@ class ScaledDotProductAttention(torch.nn.Module):
         scores = torch.softmax(masked, -1)
 
         # Final dot-product (weighting by scores, scores_dim = [bs, seq, seq], v_dim = [bs, seq, d_v], out = [bs, seq, d_v])
-        matmul_1 = torch.matmul(scores, torch.transpose(v, -2, -1))
+        matmul_1 = torch.matmul(scores, v.mT)
 
         return matmul_1
 
@@ -240,3 +241,45 @@ class TransformerDecoder(torch.nn.Module):
         for i in range(self.n):
             x = self.decoder_modules[i](x)
         return x
+
+
+class PositionalEncoding(torch.nn.Module):
+    """Adds the positional encoding from the "Attention is all you need" paper,
+    along with dropout following the regularization settings.
+    """
+
+    def __init__(self, d_model: int, dropout_p: float, max_seq: int = 5000):
+        """Initializes the positional encoding matrix.
+
+        Args:
+            d_model (int): model dimension
+            dropout_p (float): dropout probability
+            max_seq (int, optional): maximum sequence length. Defaults to 5000.
+        """
+        super(PositionalEncoding, self).__init__()
+
+        self.encoding = torch.zeros(max_seq, d_model)
+        pos = torch.arange(0, max_seq, dtype=torch.float32).unsqueeze(1)
+        div_term = torch.exp(torch.arange(
+            0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        self.encoding[:, 0::2] = torch.sin(pos * div_term)
+        self.encoding[:, 1::2] = torch.cos(pos * div_term)
+        encoding = self.encoding.unsqueeze(0)
+        self.register_buffer('encoding', encoding)
+
+        self.dropout = torch.nn.Dropout(dropout_p)
+
+    def forward(self, x: torch.Tensor):
+        """Adds the positional encoding to the input matrix.
+
+        Args:
+            x (torch.Tensor): input tensor
+
+        Returns:
+            torch.Tensor: tensor with positional encoding added
+        """
+        encoded = x + torch.autograd.Variable(self.encoding[:, :x.size(1)],
+                                              requires_grad=False)
+        encoded_dropout = self.dropout(encoded)
+
+        return encoded_dropout
