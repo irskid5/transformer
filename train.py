@@ -11,9 +11,3 @@ def setup():
         print("Using CPU.")
         device = torch.device("cpu")
     return device
-
-print("\nTraining of a Transformer Model using PyTorch.")
-
-if __name__ == "__main__":
-    device = setup()
-    
